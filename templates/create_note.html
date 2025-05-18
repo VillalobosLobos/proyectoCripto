@@ -7,22 +7,26 @@
     <h1>Crear nueva nota</h1>
     <form method="POST" action="{{ url_for('create_note') }}">
         <label>Título de la nota:</label>
-        <input type="text" name="title" required><br>
+        <input type="text" name="title" required><br><br>
 
-        <label>Contenido de la nota:</label>
-        <textarea name="note" rows="10" cols="50" required></textarea><br>
+        <label>Contenido de la nota:</label><br>
+        <textarea name="content" rows="10" cols="50" required></textarea><br><br>
 
-        <label>Agregar psicólogo por correo:</label>
+        <label>Agregar psicólogo por correo:</label><br>
         <input type="email" id="correo_input" placeholder="correo@ejemplo.com">
         <button type="button" onclick="agregarCorreo()">Agregar</button>
 
         <ul id="lista_correos"></ul>
-        <input type="hidden" name="correos_autorizados" id="correos_autorizados">
 
-        <button type="submit">Guardar nota</button>
+        <div id="correos_ocultos"></div>
+
+        <br><br><button type="submit">Guardar nota</button>
+
     </form>
 
+    <!-- Usar script externo -->
     <script src="{{ url_for('static', filename='scripts.js') }}"></script>
-    <a href="{{ url_for('main_panel') }}">← Volver al panel</a>
+
+    <br><a href="{{ url_for('main_panel') }}">← Volver al panel</a>
 </body>
 </html>

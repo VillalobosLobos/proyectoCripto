@@ -167,57 +167,70 @@ def create_note():
         return redirect(url_for('login'))
 
     if request.method == 'POST':
-        note_text = request.form['note']
-        title = request.form.get('title', 'Sin título')
-        correos = request.form.get('correos_autorizados', '').split(',')
+        title = request.form['title']
+        content = request.form['content']
+        emails = request.form.getlist('emails[]')  # Correos adicionales
 
-        # Psicólogo autor
-        user = db.session.get(Psychologist, session['user_id'])
-        email_autor = user.email
-        private_key_autor = load_key_private(email_autor)
+        # Obtener el psicólogo actual
+        author = db.session.get(Psychologist, session['user_id'])
+        if not author:
+            return "Usuario no encontrado", 404
 
-        # Clave de sesión (AES) aleatoria
-        session_key = os.urandom(32)  # AES-256
+        author_email = author.email
+        author_private_key = load_key_private(author_email)
 
-        # Cifrar la nota
-        encrypted_note = encrypt_note(note_text, session_key)
+        # Generar clave AES de sesión para cifrar la nota
+        session_key = os.urandom(32)
 
-        # Guardar la nota
-        nueva_nota = Note(
-            psychologist_id=user.id,
+        # Cifrar la nota con la clave AES
+        encrypted_note = encrypt_note(content, session_key)
+
+        # Crear y guardar la nota
+        note = Note(
             title=title,
-            encrypted_note=encrypted_note
+            encrypted_note=encrypted_note,
+            psychologist_id=author.id
         )
-        db.session.add(nueva_nota)
-        db.session.commit()
+        db.session.add(note)
+        db.session.commit()  # IMPORTANTE para que note.id se asigne
 
-        # Compartir clave con cada psicólogo autorizado
-        for correo in correos:
-            correo = correo.strip()
-            if not correo:
+        print(f"Nota creada con ID: {note.id}")
+
+        # Asegurar que el autor esté en la lista de correos para compartir
+        all_emails = set(emails)
+        all_emails.add(author_email)
+
+        for email in all_emails:
+            user = Psychologist.query.filter_by(email=email).first()
+            if not user:
+                print(f"Usuario no encontrado para email: {email}, se omite")
                 continue
 
-            psicologo = Psychologist.query.filter_by(email=correo).first()
-            if psicologo:
-                try:
-                    public_key_receiver = serialization.load_pem_public_key(
-                        psicologo.ecc_public_key.encode('utf-8')
-                    )
-                    encrypted_session_key = encrypt_session_key_for_receiver(
-                        private_key_autor,
-                        public_key_receiver,
-                        session_key
-                    )
-                    acceso = Access(
-                        note_id=nueva_nota.id,
-                        psychologist_id=psicologo.id,
-                        encrypted_session_key=encrypted_session_key
-                    )
-                    db.session.add(acceso)
-                except Exception as e:
-                    print(f"Error compartiendo con {correo}: {e}")
-            else:
-                print(f"Psicólogo con correo {correo} no encontrado.")
+            # Cargar clave pública del receptor
+            public_key_user = serialization.load_pem_public_key(user.ecc_public_key.encode('utf-8'))
+
+            # Derivar clave compartida para cifrar la clave AES
+            shared_key = author_private_key.exchange(ec.ECDH(), public_key_user)
+            derived_key = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=None,
+                info=b'session key encryption',
+                backend=default_backend()
+            ).derive(shared_key)
+
+            # Cifrar la clave AES (session_key) para cada receptor
+            iv = os.urandom(16)
+            cipher = Cipher(algorithms.AES(derived_key), modes.CFB(iv), backend=default_backend())
+            encryptor = cipher.encryptor()
+            encrypted_session_key = iv + encryptor.update(session_key) + encryptor.finalize()
+
+            access = Access(
+                note_id=note.id,
+                psychologist_id=user.id,
+                encrypted_session_key=encrypted_session_key
+            )
+            db.session.add(access)
 
         db.session.commit()
         return redirect(url_for('main_panel'))
@@ -233,21 +246,42 @@ def view_notes():
     user = db.session.get(Psychologist, session['user_id'])
     email = user.email
     private_key = load_key_private(email)
-    public_key = user.ecc_public_key
-    public_key_obj = serialization.load_pem_public_key(public_key.encode('utf-8'))
-    session_key = derive_session_key(private_key, public_key_obj)
 
-    notes_query = Note.query.filter_by(psychologist_id=user.id).all()
-    
     notes = []
-    for note in notes_query:
+
+    accesses = Access.query.filter_by(psychologist_id=user.id).all()
+
+    for access in accesses:
+        note = access.note
+        author = Psychologist.query.get(note.psychologist_id)
+
         try:
+            # Derivar clave con ECDH entre clave privada del usuario y clave pública del autor
+            author_public_key = serialization.load_pem_public_key(author.ecc_public_key.encode('utf-8'))
+            shared_key = private_key.exchange(ec.ECDH(), author_public_key)
+            derived_key = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=None,
+                info=b'session key encryption',
+                backend=default_backend()
+            ).derive(shared_key)
+
+            # Descifrar clave de sesión
+            iv = access.encrypted_session_key[:16]
+            encrypted_key = access.encrypted_session_key[16:]
+            cipher = Cipher(algorithms.AES(derived_key), modes.CFB(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            session_key = decryptor.update(encrypted_key) + decryptor.finalize()
+
+            # Descifrar nota
             decrypted = decrypt_note(note.encrypted_note, session_key)
+
             notes.append({
                 'id': note.id,
                 'title': note.title,
                 'note_content': decrypted
-                })
+            })
 
         except Exception as e:
             print(f"Error al descifrar nota {note.id}: {e}")
@@ -260,26 +294,52 @@ def view_note(note_id):
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    # Obtener usuario
+    # Obtener usuario actual
     user = db.session.get(Psychologist, session['user_id'])
     email = user.email
     private_key = load_key_private(email)
-    public_key_obj = serialization.load_pem_public_key(user.ecc_public_key.encode('utf-8'))
-    session_key = derive_session_key(private_key, public_key_obj)
 
-    # Obtener nota
-    note = Note.query.filter_by(id=note_id, psychologist_id=user.id).first()
+    # Buscar nota y verificar acceso
+    access = Access.query.filter_by(note_id=note_id, psychologist_id=user.id).first()
+    if not access:
+        return "No tienes acceso a esta nota", 403
+
+    # Obtener la nota
+    note = Note.query.get(note_id)
     if not note:
-        return "Nota no encontrada o no tienes permiso", 404
+        return "Nota no encontrada", 404
 
-    # Descifrar
+    # Obtener clave pública del autor
+    author = Psychologist.query.get(note.psychologist_id)
+    public_key_author = serialization.load_pem_public_key(author.ecc_public_key.encode('utf-8'))
+
+    # Derivar clave simétrica a partir de ECDH
+    shared_key = private_key.exchange(ec.ECDH(), public_key_author)
+    derived_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b'session key encryption',
+        backend=default_backend()
+    ).derive(shared_key)
+
+    # Descifrar la clave de sesión AES
+    encrypted_session_key = access.encrypted_session_key
+    iv = encrypted_session_key[:16]
+    encrypted_key = encrypted_session_key[16:]
+
+    cipher = Cipher(algorithms.AES(derived_key), modes.CFB(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+    session_key = decryptor.update(encrypted_key) + decryptor.finalize()
+
+    # Usar esa clave para descifrar la nota
     try:
-        decrypted = decrypt_note(note.encrypted_note, session_key)
+        decrypted_note = decrypt_note(note.encrypted_note, session_key)
     except Exception as e:
         print(f"Error al descifrar la nota: {e}")
-        decrypted = "[Error al descifrar nota]"
+        decrypted_note = "[Error al descifrar nota]"
 
-    return render_template('show_note.html', content=decrypted, title=note.title)
+    return render_template('show_note.html', title=note.title, content=decrypted_note)
 
 #Para eliminar una nota
 @app.route('/delete_note', methods=['GET', 'POST'])
@@ -296,7 +356,7 @@ def delete_note():
         if note:
             db.session.delete(note)
             db.session.commit()
-            return redirect(url_for('view_notes'))
+            return redirect(url_for('main_panel'))
         else:
             return "Nota no encontrada o no tienes permiso para eliminarla", 404
 

@@ -1,24 +1,31 @@
-let correos = [];
-
 function agregarCorreo() {
-    const input = document.getElementById("correo_input");
-    const correo = input.value.trim();
+    const input = document.getElementById('correo_input');
+    const email = input.value.trim();
+    if (!email) return alert('Por favor escribe un correo válido');
 
-    if (correo && !correos.includes(correo)) {
-        correos.push(correo);
-        actualizarLista();
-    }
+    // Evitar duplicados
+    const listaCorreos = Array.from(document.querySelectorAll('#correos_ocultos input')).map(i => i.value);
+    if (listaCorreos.includes(email)) return alert('Correo ya agregado');
 
-    input.value = "";
-    document.getElementById("correos_autorizados").value = correos.join(",");
-}
+    // Agregar visualmente en la lista
+    const li = document.createElement('li');
+    li.textContent = email + ' ';
+    const btnEliminar = document.createElement('button');
+    btnEliminar.textContent = 'Eliminar';
+    btnEliminar.type = 'button';
+    btnEliminar.onclick = () => {
+        li.remove();
+        inputOculto.remove();
+    };
+    li.appendChild(btnEliminar);
+    document.getElementById('lista_correos').appendChild(li);
 
-function actualizarLista() {
-    const lista = document.getElementById("lista_correos");
-    lista.innerHTML = "";
-    correos.forEach(correo => {
-        const li = document.createElement("li");
-        li.textContent = correo;
-        lista.appendChild(li);
-    });
+    // Agregar input oculto con name="emails[]" para que se envíe al backend
+    const inputOculto = document.createElement('input');
+    inputOculto.type = 'hidden';
+    inputOculto.name = 'emails[]';
+    inputOculto.value = email;
+    document.getElementById('correos_ocultos').appendChild(inputOculto);
+
+    input.value = '';
 }
