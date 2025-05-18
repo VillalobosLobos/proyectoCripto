@@ -15,4 +15,16 @@ class Note(db.Model):
     title = db.Column(db.String(200), nullable=False)
     encrypted_note = db.Column(db.LargeBinary, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
- 
+
+    # Relaciones (opcional)
+    author = db.relationship('Psychologist', backref='notes')
+
+class Access(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    note_id = db.Column(db.Integer, db.ForeignKey('note.id'), nullable=False)
+    psychologist_id = db.Column(db.Integer, db.ForeignKey('psychologist.id'), nullable=False)
+    encrypted_session_key = db.Column(db.LargeBinary, nullable=False)
+
+    # Relaciones
+    note = db.relationship('Note', backref='access_list')
+    psychologist = db.relationship('Psychologist', backref='shared_notes')

@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from werkzeug.security import generate_password_hash
 from werkzeug.security import check_password_hash
-from db.models import db, Psychologist, Note
+from db.models import db, Psychologist, Note, Access
 import os
 
 app = Flask(__name__)
@@ -56,6 +56,27 @@ def decrypt_note(encrypted_data, session_key):
     cipher = Cipher(algorithms.AES(session_key), modes.CFB(iv), backend=default_backend())
     decryptor = cipher.decryptor()
     return (decryptor.update(encrypted_note) + decryptor.finalize()).decode('utf-8')
+
+def encrypt_session_key_for_receiver(private_key_sender, public_key_receiver, session_key):
+    # ✅ CORRECTO: especifica ec.ECDH()
+    shared_key = private_key_sender.exchange(ec.ECDH(), public_key_receiver)
+
+    # Derivar clave simétrica con HKDF
+    derived_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b'session key encryption',
+        backend=default_backend()
+    ).derive(shared_key)
+
+    # Cifrar la clave de sesión AES con AES-CFB
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(derived_key), modes.CFB(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    encrypted_session_key = encryptor.update(session_key) + encryptor.finalize()
+
+    return iv + encrypted_session_key
 
 @app.route('/')
 def index():
@@ -144,34 +165,63 @@ def main_panel():
 def create_note():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    
-    if request.method=='POST':
-        note=request.form['note']
-        title=request.form['title']
+
+    if request.method == 'POST':
+        note_text = request.form['note']
+        title = request.form.get('title', 'Sin título')
+        correos = request.form.get('correos_autorizados', '').split(',')
+
+        # Psicólogo autor
         user = db.session.get(Psychologist, session['user_id'])
-        email = user.email
-        public_key= user.ecc_public_key
-        public_key_obj = serialization.load_pem_public_key(
-            public_key.encode('utf-8')
-            )
-        private_key=load_key_private(email)
+        email_autor = user.email
+        private_key_autor = load_key_private(email_autor)
 
-        # Derivar la clave de sesión
-        session_key = derive_session_key(private_key, public_key_obj)
+        # Clave de sesión (AES) aleatoria
+        session_key = os.urandom(32)  # AES-256
 
-        # Cifrar
-        encrypted_note = encrypt_note(note, session_key)
+        # Cifrar la nota
+        encrypted_note = encrypt_note(note_text, session_key)
 
-        #Crear la instancia de la nota
-        new_note=Note(
+        # Guardar la nota
+        nueva_nota = Note(
             psychologist_id=user.id,
             title=title,
-            encrypted_note=encrypted_note,
+            encrypted_note=encrypted_note
         )
-        db.session.add(new_note)
+        db.session.add(nueva_nota)
+        db.session.commit()
+
+        # Compartir clave con cada psicólogo autorizado
+        for correo in correos:
+            correo = correo.strip()
+            if not correo:
+                continue
+
+            psicologo = Psychologist.query.filter_by(email=correo).first()
+            if psicologo:
+                try:
+                    public_key_receiver = serialization.load_pem_public_key(
+                        psicologo.ecc_public_key.encode('utf-8')
+                    )
+                    encrypted_session_key = encrypt_session_key_for_receiver(
+                        private_key_autor,
+                        public_key_receiver,
+                        session_key
+                    )
+                    acceso = Access(
+                        note_id=nueva_nota.id,
+                        psychologist_id=psicologo.id,
+                        encrypted_session_key=encrypted_session_key
+                    )
+                    db.session.add(acceso)
+                except Exception as e:
+                    print(f"Error compartiendo con {correo}: {e}")
+            else:
+                print(f"Psicólogo con correo {correo} no encontrado.")
+
         db.session.commit()
         return redirect(url_for('main_panel'))
-    
+
     return render_template('create_note.html')
 
 #Para ver las notas
