@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Panel de Notas</title>
+</head>
+<body>
+    <h1>Bienvenido, psicólogo</h1>
+    <p>¿Qué deseas hacer?</p>
+    <ul>
+        <li><a href="{{ url_for('create_note') }}">📝 Crear nueva nota</a></li>
+        <li><a href="{{ url_for('view_notes') }}">📄 Ver notas</a></li>
+        <li><a href="{{ url_for('delete_note') }}">🗑️ Eliminar notas</a></li>
+        <li><a href="{{ url_for('logout') }}">🔐 Cerrar sesión</a></li>
+    </ul>
+</body>
+</html>

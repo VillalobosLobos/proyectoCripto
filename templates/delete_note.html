@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Eliminar Notas</title>
+</head>
+<body>
+    <h1>Eliminar una nota</h1>
+    <form method="post">
+        <label for="note_id">Selecciona una nota:</label>
+        <select name="note_id" required>
+            {% for note in notes %}
+                <option value="{{ note.id }}">{{ note.title }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Eliminar</button>
+    </form>
+    <a href="{{ url_for('main_panel') }}">← Volver al panel</a>
+</body>
+</html>

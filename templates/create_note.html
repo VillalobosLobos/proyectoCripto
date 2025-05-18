@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crear Nota</title>
+</head>
+<body>
+    <h1>Crear nueva nota</h1>
+    <form method="post" action="{{ url_for('create_note') }}">
+        <input type="text" name="title" placeholder="Título" required><br>
+        <textarea name="note" rows="10" cols="50" required></textarea><br>
+        <button type="submit">Guardar</button>
+    </form>
+    <a href="{{ url_for('main_panel') }}">← Volver al panel</a>
+</body>
+</html>
